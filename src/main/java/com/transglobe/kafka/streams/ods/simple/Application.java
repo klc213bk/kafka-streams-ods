@@ -59,11 +59,17 @@ public class Application {
 					on.put("SEG_OWNER", sinkSegOwner);
 					on.put("TABLE_NAME", sinkTableName);
 					on.put("SQL_REDO", redoStr.replace(sourceTableStr, sinkTableStr));
+					
+					logger.warn("new value={}", jsonNode.toString());
+					
+					return new KeyValue<>(key, jsonNode.toString());
 				} catch (Exception e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
+					logger.error(e.getMessage(), e);
+					return new KeyValue<>("", "");
 				} 
-				return new KeyValue<>(key, value);
+				
 			})
 			.to(sinkTopic);
 
