@@ -11,49 +11,84 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.Topology;
 import org.apache.kafka.streams.kstream.KStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 
 public class Application {
+	static final Logger logger = LoggerFactory.getLogger(Application.class);
 
 	public static void main(String[] args) {
-		System.out.println(">>> SimpleApplication is running !!!");
-		
-		Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "streams-ods-simple");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
-        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+		logger.warn(">>> Stream Application is running !!!");
+		try {
+			Properties prop = ConfigUtils.getProperties("config.properties");
+			String bootstrapServers = prop.getProperty("bootstrap.servers");
+			String applicationId = prop.getProperty("application_id");
+			String sourceTopic = prop.getProperty("stream.source.topic");
+			String sinkTopic = prop.getProperty("stream.sink.topic");
+			String sinkTable = prop.getProperty("sink.table");
+			String sinkSegOwner = sinkTable.split("\\.")[0];
+			String sinkTableName = sinkTable.split("\\.")[1];
 
-        final StreamsBuilder builder = new StreamsBuilder();
+			Properties props = new Properties();
+			props.put(StreamsConfig.APPLICATION_ID_CONFIG, applicationId);
+			props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+			props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+			props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
 
-        KStream<String, String> source = builder.stream("etl.pmuser.t_production_detail");
+			final StreamsBuilder builder = new StreamsBuilder();
 
-        source.map((key, value) -> {
-        	return new KeyValue<>(key, value);
-        })
-        .to("etl.pmuser.k_production_detail");
+			KStream<String, String> source = builder.stream(sourceTopic);
 
-        final Topology topology = builder.build();
+			source.map((key, value) -> {
+				logger.warn("key={}", key);
+				logger.warn("value={}", value);
+				ObjectMapper objectMapper = new ObjectMapper();
+				try {
+					JsonNode jsonNode = objectMapper.readTree(value);
+					String redoStr = jsonNode.get("payload").get("SQL_REDO").asText();
+					String sourceSegOwner = jsonNode.get("payload").get("SEG_OWNER").asText();
+					String sourceTableName = jsonNode.get("payload").get("TABLE_NAME").asText();
+					String sourceTableStr = String.format("\"%s\".\"%s\"", sourceSegOwner, sourceTableName);
+					String sinkTableStr = String.format("\"%s\".\"%s\"", sinkTable.split("\\.")[0], sinkTable.split("\\.")[1]);
+					ObjectNode on = (ObjectNode)jsonNode.get("payload");
+					on.put("SEG_OWNER", sinkSegOwner);
+					on.put("TABLE_NAME", sinkTableName);
+					on.put("SQL_REDO", redoStr.replace(sourceTableStr, sinkTableStr));
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} 
+				return new KeyValue<>(key, value);
+			})
+			.to(sinkTopic);
 
-        final KafkaStreams streams = new KafkaStreams(topology, props);
-        final CountDownLatch latch = new CountDownLatch(1);
+			final Topology topology = builder.build();
 
-        // attach shutdown handler to catch control-c
-        Runtime.getRuntime().addShutdownHook(new Thread("streams-shutdown-hook") {
-            @Override
-            public void run() {
-                streams.close();
-                latch.countDown();
-            }
-        });
+			final KafkaStreams streams = new KafkaStreams(topology, props);
+			final CountDownLatch latch = new CountDownLatch(1);
 
-        try {
-            streams.start();
-            latch.await();
-        } catch (Throwable e) {
-            System.exit(1);
-        }
-        System.exit(0);
-        
+			// attach shutdown handler to catch control-c
+			Runtime.getRuntime().addShutdownHook(new Thread("streams-shutdown-hook") {
+				@Override
+				public void run() {
+					streams.close();
+					latch.countDown();
+				}
+			});
+
+
+			streams.start();
+			latch.await();
+		} catch (Throwable e) {
+			System.exit(1);
+		}
+		System.exit(0);
+
 	}
 
 }
