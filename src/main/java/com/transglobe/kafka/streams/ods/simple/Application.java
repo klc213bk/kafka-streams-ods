@@ -27,6 +27,9 @@ import com.transglobe.kafka.streams.ods.common.ProductionDetail;
 public class Application {
 	static final Logger logger = LoggerFactory.getLogger(Application.class);
 
+	static class CountRecord {
+		Integer cnt = 0;
+	}
 	public static void main(String[] args) {
 		logger.warn(">>> Stream Application is running !!!");
 		try {
@@ -49,9 +52,14 @@ public class Application {
 
 			KStream<String, String> source = builder.stream(sourceTopic);
 
+			CountRecord countRecord = new CountRecord();
+			
 			source.map((key, value) -> {
 //				logger.warn("key={}", key);
 //				logger.warn("value={}", value);
+				countRecord.cnt = countRecord.cnt + 1;
+				logger.warn(">>>record procedded={}", countRecord.cnt);
+				
 				ObjectMapper objectMapper = new ObjectMapper();
 				try {
 					JsonNode jsonNode = objectMapper.readTree(value);
@@ -66,7 +74,7 @@ public class Application {
 					on.put("SQL_REDO", redoStr.replace(sourceTableStr, sinkTableStr));
 					
 					String dataContent = jsonNode.get("payload").get("data").toString();
-					logger.warn("dataContent={}", dataContent);
+//					logger.warn("dataContent={}", dataContent);
 					ObjectMapper objectMapper2 = new ObjectMapper();
 					ProductionDetail detail = objectMapper2.readValue(dataContent, ProductionDetail.class);
 					
@@ -78,7 +86,7 @@ public class Application {
 					
 					on.put("SINK_DATA", objectMapper2.writeValueAsString(detail));
 					
-					logger.warn("detail={}", ToStringBuilder.reflectionToString(detail));
+//					logger.warn("detail={}", ToStringBuilder.reflectionToString(detail));
 	
 					return new KeyValue<>(key, jsonNode.toString());
 				} catch (Exception e) {
