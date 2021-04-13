@@ -1,9 +1,13 @@
 package com.transglobe.kafka.streams.ods.simple;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 
+import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.KeyValue;
@@ -17,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.transglobe.kafka.streams.ods.common.ProductionDetail;
 
 
 public class Application {
@@ -45,8 +50,8 @@ public class Application {
 			KStream<String, String> source = builder.stream(sourceTopic);
 
 			source.map((key, value) -> {
-				logger.warn("key={}", key);
-				logger.warn("value={}", value);
+//				logger.warn("key={}", key);
+//				logger.warn("value={}", value);
 				ObjectMapper objectMapper = new ObjectMapper();
 				try {
 					JsonNode jsonNode = objectMapper.readTree(value);
@@ -56,11 +61,25 @@ public class Application {
 					String sourceTableStr = String.format("\"%s\".\"%s\"", sourceSegOwner, sourceTableName);
 					String sinkTableStr = String.format("\"%s\".\"%s\"", sinkTable.split("\\.")[0], sinkTable.split("\\.")[1]);
 					ObjectNode on = (ObjectNode)jsonNode.get("payload");
-					on.put("SEG_OWNER", sinkSegOwner);
-					on.put("TABLE_NAME", sinkTableName);
+					on.put("SINK_SEG_OWNER", sinkSegOwner);
+					on.put("SINK_TABLE_NAME", sinkTableName);
 					on.put("SQL_REDO", redoStr.replace(sourceTableStr, sinkTableStr));
 					
+					String dataContent = jsonNode.get("payload").get("data").toString();
+					logger.warn("dataContent={}", dataContent);
+					ObjectMapper objectMapper2 = new ObjectMapper();
+					ProductionDetail detail = objectMapper2.readValue(dataContent, ProductionDetail.class);
 					
+					java.util.Date utilDate = new java.util.Date();
+					LocalDate localDate = LocalDate.now();
+					Date date = Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
+					detail.setDataDate(date);
+					detail.setTblUpdTime(utilDate);
+					
+					on.put("SINK_DATA", objectMapper2.writeValueAsString(detail));
+					
+					logger.warn("detail={}", ToStringBuilder.reflectionToString(detail));
+	
 					return new KeyValue<>(key, jsonNode.toString());
 				} catch (Exception e) {
 					// TODO Auto-generated catch block
