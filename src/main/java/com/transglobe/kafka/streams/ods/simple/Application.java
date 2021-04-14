@@ -1,5 +1,6 @@
 package com.transglobe.kafka.streams.ods.simple;
 
+import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Arrays;
@@ -25,7 +26,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transglobe.kafka.streams.ods.common.ProductionDetail;
 
 import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.expression.BinaryExpression;
 import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.ExpressionVisitorAdapter;
+import net.sf.jsqlparser.expression.operators.relational.ComparisonOperator;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.statement.Statement;
@@ -49,7 +53,7 @@ public class Application {
 			String sinkTable = prop.getProperty("sink.table");
 			String sinkSegOwner = sinkTable.split("\\.")[0];
 			String sinkTableName = sinkTable.split("\\.")[1];
-			
+
 			Properties props = new Properties();
 			props.put(StreamsConfig.APPLICATION_ID_CONFIG, applicationId);
 			props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -64,7 +68,7 @@ public class Application {
 
 			source.map((key, value) -> {
 				//				logger.warn("key={}", key);
-				logger.warn("value={}", value);
+				//				logger.warn("value={}", value);
 				countRecord.cnt = countRecord.cnt + 1;
 				logger.warn(">>>record processed={}", countRecord.cnt);
 
@@ -76,6 +80,7 @@ public class Application {
 						String updateSql = getUpdateSql(jsonNode, sinkTable);
 						ObjectNode on = (ObjectNode)jsonNode.get("payload");
 						on.put("SINK_SQL_REDO", updateSql);
+//						logger.warn(">>> SINK_SQL_REDO={}", updateSql);
 						return new KeyValue<>(key, jsonNode.toString());
 					} else if ("INSERT".equals(operation)) {
 
@@ -141,11 +146,26 @@ public class Application {
 		System.exit(0);
 
 	}
-	
+
 	private static String getUpdateSql(JsonNode jsonNode, String sinkFullTableName) throws JSQLParserException {
 		String redoStr = jsonNode.get("payload").get("SQL_REDO").asText();
+//		logger.info("   >>> redoStr={}", redoStr);
+
 		Statement statement = CCJSqlParserUtil.parse(redoStr);
 		Update update = (Update) statement;
+
+		java.util.Date utilDate = new java.util.Date();
+		LocalDate localDate = LocalDate.now();
+		Date date = Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
+		
+		String pattern = "yyyy-MM-dd";
+		SimpleDateFormat simpleDateFormat = new SimpleDateFormat(pattern);
+		String patternDt = "yyyy-MM-dd HH:mm:ss";
+		SimpleDateFormat simpleDateFormatDt = new SimpleDateFormat(patternDt);
+
+		String dateStr = simpleDateFormat.format(date);
+		String dateStrDt = simpleDateFormatDt.format(utilDate);
+		
 		
 		StringBuilder sb = new StringBuilder();
 		sb.append("UPDATE " + sinkFullTableName + " SET ");
@@ -155,20 +175,41 @@ public class Application {
 		String[] values = new String[size];
 		for (int i = 0; i < size; i++) {
 			values[i] = expressions.get(i).toString();
-			System.out.println("value i:" + values[i]);
+//			System.out.println("value i:" + values[i]);
 		}
 		for (int i = 0; i < columns.size(); i++) {
 			// entry.put(trimQuotes(columns.get(i).toString()), trimQuotes(values[i]));
-			System.out.println("columns i:" + columns.get(i));
+//			System.out.println("columns i:" + columns.get(i));
 			sb.append(columns.get(i) + "=" + values[i].toString() + ",");
 		}
-		sb.append("\"DATA_DATE\"=TIMESTAMP ' " + "2021-01-01 00:00:00" + "', ");
-		sb.append("\"TBL_UPD_TIME\"=TIMESTAMP ' " + "2021-01-01 13:34:31" + "' ");
+		sb.append("\"DATA_DATE\"=to_date('" + dateStr + "', 'YYYY-MM-DD'), ");
+		sb.append("\"TBL_UPD_TIME\"=to_date('" + dateStrDt + "', 'YYYY-MM-DD HH24:MI:SS') ");
 		
 		Expression where = update.getWhere();
-		System.out.println("where :" + where.toString());
-		sb.append("WHERE " + where.toString());
 		
+		//		System.out.println("where :" + where.toString());
+		//	String whereClause = "a=3 AND b=4 AND c=5 AND d>5 AND x<10";
+		String whereClause = where.toString();
+		
+		sb.append("WHERE ");
+		String key = "\"DETAIL_ID\"";
+		Expression expr = CCJSqlParserUtil.parseCondExpression(whereClause);
+		expr.accept(new ExpressionVisitorAdapter() {
+
+			@Override
+			protected void visitBinaryExpression(BinaryExpression expr) {
+				if (expr instanceof ComparisonOperator) {
+//					System.out.println("left=" + expr.getLeftExpression() + "  op=" +  expr.getStringExpression() + "  right=" + expr.getRightExpression());
+					
+					if (key.equals(expr.getLeftExpression().toString())) {
+						sb.append(key + expr.getStringExpression() + expr.getRightExpression());
+					}
+				}
+
+				super.visitBinaryExpression(expr); 
+			}
+		});
+
 		return sb.toString();
 	}
 }
